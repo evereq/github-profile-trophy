@@ -1,7 +1,12 @@
 import { Card } from "../src/card.ts";
-import { CONSTANTS, parseParams } from "../src/utils.ts";
+import {
+  CONSTANTS,
+  isUsernameAllowed,
+  parseAllowedUsernames,
+  parseParams,
+} from "../src/utils.ts";
 import { COLORS, Theme } from "../src/theme.ts";
-import { Error400 } from "../src/error_page.ts";
+import { Error400, Error403 } from "../src/error_page.ts";
 import "@std/dotenv/load";
 import { staticRenderRegeneration } from "../src/StaticRenderRegeneration/index.ts";
 import { GithubRepositoryService } from "../src/Repository/GithubRepository.ts";
@@ -28,13 +33,37 @@ const defaultHeaders = new Headers(
   },
 );
 
-export default (request: Request) =>
-  staticRenderRegeneration(request, {
+// Optional comma-separated list of GitHub usernames this instance renders.
+// Unset or empty keeps the upstream behaviour: every username is served.
+const allowedUsernames = parseAllowedUsernames(
+  Deno.env.get("ALLOWED_USERNAMES"),
+);
+
+function isHealthCheck(request: Request): boolean {
+  try {
+    return new URL(request.url).pathname === "/healthz";
+  } catch {
+    return false;
+  }
+}
+
+export default (request: Request) => {
+  // Liveness/readiness probe: answers without touching the GitHub API.
+  if (isHealthCheck(request)) {
+    return new Response("ok", {
+      headers: new Headers({
+        "Content-Type": "text/plain",
+        "Cache-Control": "no-store",
+      }),
+    });
+  }
+  return staticRenderRegeneration(request, {
     revalidate: CONSTANTS.REVALIDATE_TIME,
     headers: defaultHeaders,
   }, function (req: Request) {
     return app(req);
   });
+};
 
 async function app(req: Request): Promise<Response> {
   const params = parseParams(req);
@@ -94,6 +123,21 @@ async function app(req: Request): Promise<Response> {
         headers: new Headers({
           "Content-Type": "text/html",
           "Cache-Control": cacheControlHeader,
+        }),
+      },
+    );
+  }
+  if (!isUsernameAllowed(username, allowedUsernames)) {
+    const error = new Error403(
+      "This instance only renders trophies for an allowlisted set of GitHub users.",
+    );
+    return new Response(
+      error.render(),
+      {
+        status: error.status,
+        headers: new Headers({
+          "Content-Type": "text/html",
+          "Cache-Control": "public, max-age=3600",
         }),
       },
     );

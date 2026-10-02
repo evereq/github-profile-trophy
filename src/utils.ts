@@ -38,6 +38,29 @@ export function parseParams(req: Request): CustomURLSearchParams {
   return new CustomURLSearchParams(splittedURL[1]);
 }
 
+// Parses a comma-separated username list (the ALLOWED_USERNAMES env var).
+// Returns null for an unset or empty list, which means "serve everyone".
+export function parseAllowedUsernames(
+  value: string | undefined,
+): Set<string> | null {
+  const names = new Set<string>();
+  for (const name of (value ?? "").split(",")) {
+    const normalized = name.trim().toLowerCase();
+    if (normalized.length > 0) {
+      names.add(normalized);
+    }
+  }
+  return names.size > 0 ? names : null;
+}
+
+// GitHub usernames are case-insensitive, so the comparison is too.
+export function isUsernameAllowed(
+  username: string,
+  allowed: Set<string> | null,
+): boolean {
+  return allowed === null || allowed.has(username.trim().toLowerCase());
+}
+
 export function abridgeScore(score: number): string {
   if (Math.abs(score) < 1) {
     return "0pt";

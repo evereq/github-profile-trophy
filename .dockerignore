@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+.idea
+.env
+deno.lock
+docker-compose.yml
+test
+src/__tests__
+src/Helpers/__tests__
+*.md
