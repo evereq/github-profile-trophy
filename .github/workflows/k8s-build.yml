@@ -1,0 +1,88 @@
+# evereq fork only: builds the image behind the self-hosted trophy instance at
+# https://trophy-github.ever.co (ever-co/k8s-gitops apps/github-profile-trophy-prod).
+# Fleet CI/CD standard: GitHub Actions -> self-hosted ARC runner -> GHCR -> ArgoCD
+# Image Updater, which digest-tracks :prod.
+#
+# Self-hosted runners ONLY. RUNNER_LINUX_X64_4 is a repo variable naming this repo's
+# own ARC pool (evereq-trophy-x64-4); there is deliberately no GitHub-hosted fallback.
+# No pull_request trigger: a public repo must never run fork PRs on our runners.
+name: k8s-build
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+concurrency:
+  group: k8s-build-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  DENO_VERSION: v2.9.7
+jobs:
+  build:
+    runs-on: ${{ vars.RUNNER_LINUX_X64_4 }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Format check
+        run: deno fmt --check
+      # Upstream treats lint as advisory; keep it visible without blocking.
+      - name: Lint
+        continue-on-error: true
+        run: deno lint
+      - name: Unit tests
+        run: deno task test
+      - name: Build image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t trophy:ci .
+      # Boot the BUILT image the way k8s runs it (non-root, read-only root fs, /tmp
+      # as tmpfs, username allowlist on) and render a real card from the GitHub API.
+      # Green unit tests alone do not prove the container starts.
+      - name: Smoke test the image
+        env:
+          GITHUB_TOKEN1: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker run -d --name trophy --read-only --tmpfs /tmp \
+            -e GITHUB_TOKEN1 -e ALLOWED_USERNAMES=evereq \
+            -p 127.0.0.1:18080:8080 trophy:ci
+          trap 'docker logs trophy || true; docker rm -f trophy >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:18080/healthz && break
+            sleep 1
+          done
+          fail() { echo "::error::$1"; exit 1; }
+          get() { curl -sS -o /tmp/body -w '%{http_code}' "http://127.0.0.1:18080$1"; }
+          [ "$(get /healthz)" = 200 ] || fail "/healthz did not answer 200"
+          [ "$(get /)" = 400 ] || fail "a request without username should be 400"
+          [ "$(get '/?username=ryo-ma')" = 403 ] || fail "a username outside ALLOWED_USERNAMES should be 403"
+          [ "$(get '/?username=evereq&theme=darkhub')" = 200 ] || fail "rendering evereq's trophies failed"
+          grep -q '<svg' /tmp/body || fail "the render is not an SVG"
+          grep -q '#0d1117' /tmp/body || fail "the darkhub theme colours are missing"
+          echo "Rendered $(wc -c < /tmp/body) bytes of SVG for evereq"
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/master'
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Push the exact image the smoke test booted, not a rebuild.
+      - name: Push :prod and :sha-<sha>
+        if: github.ref == 'refs/heads/master'
+        run: |
+          set -euo pipefail
+          for tag in prod "sha-${GITHUB_SHA}"; do
+            docker tag trophy:ci "${IMAGE}:${tag}"
+            docker push "${IMAGE}:${tag}"
+          done

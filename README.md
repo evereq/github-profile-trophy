@@ -652,6 +652,23 @@ GITHUB_TOKEN2=your_token
 https://<your-app>.vercel.app/?username=USERNAME
 ```
 
+## Self-hosting with Docker or Kubernetes
+
+The `Dockerfile` builds a container that listens on port `8080` and runs as a
+non-root user. Pass the same `GITHUB_TOKEN1` / `GITHUB_TOKEN2` variables as on
+Vercel. A token with read-only access to public repositories is enough.
+
+- `GET /healthz` answers `200 ok` without calling the GitHub API, so it is safe
+  to use for liveness and readiness probes.
+- `ALLOWED_USERNAMES` (optional, comma-separated, case-insensitive) limits the
+  instance to those GitHub users; any other username gets `403`. Leave it empty
+  to serve everyone.
+
+```
+docker build -t github-profile-trophy .
+docker run -p 8080:8080 -e GITHUB_TOKEN1=your_token -e ALLOWED_USERNAMES=USERNAME github-profile-trophy
+```
+
 # Contribution Guide
 
 Check [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
