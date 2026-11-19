@@ -59,7 +59,7 @@ jobs:
           docker run -d --name trophy --read-only --tmpfs /tmp \
             -e GITHUB_TOKEN1 -e ALLOWED_USERNAMES=evereq \
             -p 127.0.0.1:18080:8080 trophy:ci
-          trap 'docker logs trophy || true; docker rm -f trophy trophy-down >/dev/null 2>&1 || true' EXIT
+          trap 'docker logs trophy || true; docker logs trophy-down 2>/dev/null || true; docker rm -f trophy trophy-down >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 60); do
             curl -fsS -o /dev/null http://127.0.0.1:18080/healthz && break
             sleep 1
@@ -83,7 +83,7 @@ jobs:
             sleep 1
           done
           down=$(curl -sS -o /tmp/down -D /tmp/down-headers -w '%{http_code}' \
-            'http://127.0.0.1:18081/?username=evereq&theme=darkhub')
+            'http://127.0.0.1:18081/?username=evereq&theme=darkhub' || true)
           [ "$down" = 502 ] || fail "a GitHub failure should answer 502, got $down"
           grep -qi '^cache-control: *no-store' /tmp/down-headers || fail "a failed render must be sent with Cache-Control: no-store"
           echo "Rendered $(wc -c < /tmp/body) bytes of SVG for evereq"
