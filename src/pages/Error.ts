@@ -24,3 +24,18 @@ export function ErrorPage({ error }: ErrorPageProps) {
 
   return cause;
 }
+
+// A failed render must never be cached. Cloudflare (s-maxage) and GitHub's camo
+// image proxy would keep serving the error for hours after GitHub recovers: on
+// 2026-11-19 one GitHub 502 took the README badge down for up to 8 hours.
+export const ERROR_CACHE_CONTROL = "no-store";
+
+export function errorResponse(error: ServiceError): Response {
+  return new Response(ErrorPage({ error }).render(), {
+    status: error.code,
+    headers: new Headers({
+      "Content-Type": "text/html",
+      "Cache-Control": ERROR_CACHE_CONTROL,
+    }),
+  });
+}

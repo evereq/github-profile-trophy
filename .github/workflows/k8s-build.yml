@@ -59,19 +59,33 @@ jobs:
           docker run -d --name trophy --read-only --tmpfs /tmp \
             -e GITHUB_TOKEN1 -e ALLOWED_USERNAMES=evereq \
             -p 127.0.0.1:18080:8080 trophy:ci
-          trap 'docker logs trophy || true; docker rm -f trophy >/dev/null 2>&1 || true' EXIT
+          trap 'docker logs trophy || true; docker logs trophy-down 2>/dev/null || true; docker rm -f trophy trophy-down >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 60); do
             curl -fsS -o /dev/null http://127.0.0.1:18080/healthz && break
             sleep 1
           done
           fail() { echo "::error::$1"; exit 1; }
-          get() { curl -sS -o /tmp/body -w '%{http_code}' "http://127.0.0.1:18080$1"; }
+          get() { curl -sS -o /tmp/body -D /tmp/headers -w '%{http_code}' "http://127.0.0.1:18080$1"; }
           [ "$(get /healthz)" = 200 ] || fail "/healthz did not answer 200"
           [ "$(get /)" = 400 ] || fail "a request without username should be 400"
           [ "$(get '/?username=ryo-ma')" = 403 ] || fail "a username outside ALLOWED_USERNAMES should be 403"
           [ "$(get '/?username=evereq&theme=darkhub')" = 200 ] || fail "rendering evereq's trophies failed"
           grep -q '<svg' /tmp/body || fail "the render is not an SVG"
           grep -q '#0d1117' /tmp/body || fail "the darkhub theme colours are missing"
+          grep -qi '^cache-control:.*s-maxage' /tmp/headers || fail "a good render should stay CDN-cacheable"
+          # GitHub down: the card must answer 502 and must not be cached. On 2026-11-19 a
+          # GitHub 502 came back as a cached "404 user not found" and hid the badge for hours.
+          docker run -d --name trophy-down --read-only --tmpfs /tmp \
+            -e GITHUB_TOKEN1 -e ALLOWED_USERNAMES=evereq -e GITHUB_API=http://127.0.0.1:9 \
+            -p 127.0.0.1:18081:8080 trophy:ci
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:18081/healthz && break
+            sleep 1
+          done
+          down=$(curl -sS -o /tmp/down -D /tmp/down-headers -w '%{http_code}' \
+            'http://127.0.0.1:18081/?username=evereq&theme=darkhub' || true)
+          [ "$down" = 502 ] || fail "a GitHub failure should answer 502, got $down"
+          grep -qi '^cache-control: *no-store' /tmp/down-headers || fail "a failed render must be sent with Cache-Control: no-store"
           echo "Rendered $(wc -c < /tmp/body) bytes of SVG for evereq"
       - name: Log in to GHCR
         if: github.ref == 'refs/heads/master'

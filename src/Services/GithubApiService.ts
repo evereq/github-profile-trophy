@@ -19,12 +19,13 @@ import { CONSTANTS } from "../utils.ts";
 import { EServiceKindError, ServiceError } from "../Types/index.ts";
 import { Logger } from "../Helpers/Logger.ts";
 import { requestGithubData } from "./request.ts";
+import { attemptsFor, parseTokens, tokenForAttempt } from "./tokens.ts";
 
 // Need to be here - Exporting from another file makes array of null
-export const TOKENS = [
+export const TOKENS = parseTokens([
   Deno.env.get("GITHUB_TOKEN1"),
   Deno.env.get("GITHUB_TOKEN2"),
-];
+]);
 
 export class GithubApiService extends GithubRepository {
   async requestUserAll(
@@ -83,14 +84,14 @@ export class GithubApiService extends GithubRepository {
   ) {
     try {
       const retry = new Retry(
-        TOKENS.length,
+        attemptsFor(TOKENS),
         CONSTANTS.DEFAULT_GITHUB_RETRY_DELAY,
       );
       return await retry.fetch<Promise<T>>(async ({ attempt }) => {
         return await requestGithubData(
           query,
           variables,
-          TOKENS[attempt],
+          tokenForAttempt(TOKENS, attempt),
         );
       });
     } catch (error) {
@@ -103,7 +104,12 @@ export class GithubApiService extends GithubRepository {
       } else {
         Logger.error(error);
       }
-      return new ServiceError("not found", EServiceKindError.NOT_FOUND);
+      // No GitHub answer we could read (network error, 5xx, 401): that is an
+      // upstream failure, not proof that the user does not exist.
+      return new ServiceError(
+        "GitHub API request failed",
+        EServiceKindError.UPSTREAM,
+      );
     }
   }
 }

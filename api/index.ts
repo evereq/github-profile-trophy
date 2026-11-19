@@ -12,7 +12,7 @@ import { staticRenderRegeneration } from "../src/StaticRenderRegeneration/index.
 import { GithubRepositoryService } from "../src/Repository/GithubRepository.ts";
 import { GithubApiService } from "../src/Services/GithubApiService.ts";
 import { ServiceError } from "../src/Types/index.ts";
-import { ErrorPage } from "../src/pages/Error.ts";
+import { errorResponse } from "../src/pages/Error.ts";
 import { cacheProvider } from "../src/config/cache.ts";
 
 const serviceProvider = new GithubApiService();
@@ -177,16 +177,7 @@ async function app(req: Request): Promise<Response> {
   if (!hasCache) {
     const userResponseInfo = await client.requestUserInfo(username);
     if (userResponseInfo instanceof ServiceError) {
-      return new Response(
-        ErrorPage({ error: userResponseInfo }).render(),
-        {
-          status: userResponseInfo.code,
-          headers: new Headers({
-            "Content-Type": "text/html",
-            "Cache-Control": cacheControlHeader,
-          }),
-        },
-      );
+      return errorResponse(userResponseInfo);
     }
     userInfo = userResponseInfo;
     await cacheProvider.set(userKeyCache, JSON.stringify(userInfo));
