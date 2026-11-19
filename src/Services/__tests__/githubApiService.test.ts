@@ -57,6 +57,10 @@ stub(
     new Promise((resolve) => {
       resolve(rateLimitMock.default.exceeded);
     }),
+    // Should report an upstream failure as 502: GitHub answers 502 to both attempts.
+    // soxa rejects any non-2xx answer, and returnsNext throws an Error value.
+    new Error("Request failed with status code 502"),
+    new Error("Request failed with status code 502"),
   ]),
 );
 
@@ -136,4 +140,19 @@ Deno.test("Should throw RATE LIMIT Exceed", async () => {
 
   assertEquals((error as ServiceError).code, 419);
   assertEquals(error instanceof ServiceError, true);
+});
+
+// 2026-11-19: a GitHub 502 came back as "404 user not found", which the CDN then cached.
+Deno.test("Should report an upstream failure as 502", async () => {
+  const provider = new GithubApiService();
+  let error: unknown = null;
+
+  try {
+    error = await provider.requestUserInfo("test");
+  } catch (e) {
+    error = e;
+  }
+
+  assertEquals(error instanceof ServiceError, true);
+  assertEquals((error as ServiceError).code, 502);
 });
